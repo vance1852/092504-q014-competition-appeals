@@ -33,3 +33,51 @@ class ConflictError(DomainError):
 
     code = "conflict"
     status = 409
+
+
+class EligibilityError(ConflictError):
+    """选手不具备申诉资格（未参赛、已取消资格等）。"""
+
+    code = "competitor_ineligible"
+
+
+class AppealWindowClosed(ConflictError):
+    """申诉不在成绩版本允许的申诉期限内。"""
+
+    code = "appeal_window_closed"
+
+
+class DuplicateAppealError(ConflictError):
+    """同一成绩版本与申诉事项已有在办或终局案件。"""
+
+    code = "duplicate_appeal"
+
+
+class ConflictOfInterestError(ConflictError):
+    """候选承办人与案件存在未解除的利益冲突。"""
+
+    code = "conflict_of_interest"
+
+
+class NoAdjudicatorAvailable(ConflictError):
+    """合格人员中暂无可分派的承办人。"""
+
+    code = "no_adjudicator_available"
+
+
+class LeaseExpired(ConflictError):
+    """承办租约已到期并被回收，旧承办人不能继续提交。"""
+
+    code = "lease_expired"
+
+
+class NotLeaseHolder(ConflictError):
+    """操作者不是案件当前生效租约的承办人。"""
+
+    code = "not_lease_holder"
+
+
+class ProtectedStateError(ConflictError):
+    """案件已进入撤诉、驳回或裁决等受保护终态。"""
+
+    code = "protected_state"

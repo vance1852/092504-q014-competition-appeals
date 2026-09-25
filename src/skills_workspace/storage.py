@@ -63,6 +63,129 @@ CREATE TABLE IF NOT EXISTS audit_events (
     event_hash TEXT NOT NULL UNIQUE,
     occurred_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS competitions (
+    competition_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS competitors (
+    competitor_id TEXT PRIMARY KEY,
+    competition_id TEXT NOT NULL REFERENCES competitions(competition_id),
+    person_name TEXT NOT NULL,
+    eligible INTEGER NOT NULL CHECK(eligible IN (0, 1)),
+    created_at TEXT NOT NULL,
+    UNIQUE(competition_id, competitor_id)
+);
+CREATE TABLE IF NOT EXISTS score_versions (
+    version_id TEXT PRIMARY KEY,
+    competition_id TEXT NOT NULL REFERENCES competitions(competition_id),
+    version_label TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    appeal_deadline TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS score_entries (
+    entry_id TEXT PRIMARY KEY,
+    version_id TEXT NOT NULL REFERENCES score_versions(version_id),
+    competitor_id TEXT NOT NULL REFERENCES competitors(competitor_id),
+    score_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(version_id, competitor_id)
+);
+CREATE TABLE IF NOT EXISTS adjudicators (
+    adjudicator_id TEXT PRIMARY KEY,
+    competition_id TEXT NOT NULL REFERENCES competitions(competition_id),
+    display_name TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK(active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    UNIQUE(competition_id, adjudicator_id)
+);
+CREATE TABLE IF NOT EXISTS conflict_declarations (
+    conflict_id TEXT PRIMARY KEY,
+    competition_id TEXT NOT NULL REFERENCES competitions(competition_id),
+    adjudicator_id TEXT NOT NULL REFERENCES adjudicators(adjudicator_id),
+    competitor_id TEXT NOT NULL REFERENCES competitors(competitor_id),
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(adjudicator_id, competitor_id)
+);
+CREATE TABLE IF NOT EXISTS appeal_cases (
+    case_id TEXT PRIMARY KEY,
+    case_number TEXT NOT NULL UNIQUE,
+    version_id TEXT NOT NULL REFERENCES score_versions(version_id),
+    competitor_id TEXT NOT NULL REFERENCES competitors(competitor_id),
+    grounds TEXT NOT NULL,
+    grounds_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    handler_id TEXT,
+    lease_generation INTEGER NOT NULL DEFAULT 0,
+    leased_until TEXT,
+    reviewer_id TEXT,
+    recommendation TEXT,
+    recommendation_basis_digest TEXT,
+    recommendation_basis_ref TEXT,
+    proposed_score_ref TEXT,
+    recommended_at TEXT,
+    final_outcome TEXT,
+    final_basis_digest TEXT,
+    final_basis_ref TEXT,
+    corrected_score_ref TEXT,
+    decided_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_appeal_cases_version_competitor ON appeal_cases(version_id, competitor_id);
+CREATE TABLE IF NOT EXISTS case_evidence (
+    evidence_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES appeal_cases(case_id),
+    version_seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    content_digest TEXT NOT NULL,
+    storage_ref TEXT NOT NULL,
+    media_type TEXT,
+    byte_size INTEGER,
+    submitted_by TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(case_id, version_seq)
+);
+CREATE TABLE IF NOT EXISTS case_screenings (
+    screening_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES appeal_cases(case_id),
+    adjudicator_id TEXT NOT NULL REFERENCES adjudicators(adjudicator_id),
+    status TEXT NOT NULL,
+    reason TEXT,
+    checked_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT NOT NULL,
+    UNIQUE(case_id, adjudicator_id)
+);
+CREATE TABLE IF NOT EXISTS evidence_requests (
+    request_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id TEXT NOT NULL REFERENCES appeal_cases(case_id),
+    note TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS case_assignments (
+    assignment_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES appeal_cases(case_id),
+    adjudicator_id TEXT NOT NULL REFERENCES adjudicators(adjudicator_id),
+    generation INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    released_at TEXT,
+    release_reason TEXT,
+    UNIQUE(case_id, generation)
+);
+CREATE INDEX IF NOT EXISTS idx_assignments_case ON case_assignments(case_id);
+CREATE TABLE IF NOT EXISTS score_reference_updates (
+    update_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES appeal_cases(case_id),
+    version_id TEXT NOT NULL REFERENCES score_versions(version_id),
+    competitor_id TEXT NOT NULL REFERENCES competitors(competitor_id),
+    previous_ref TEXT NOT NULL,
+    new_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 

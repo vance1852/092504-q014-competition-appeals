@@ -8,9 +8,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .appeal_service import AppealService
 from .errors import DomainError, ValidationError
 from .service import DomainService
 from .storage import Database
+
+
+def _write_result(result) -> tuple[int, dict[str, Any]]:
+    """统一转换幂等写回结果。"""
+
+    receipt = result.receipt if hasattr(result, "receipt") else result
+    payload = dict(receipt.__dict__)
+    response = getattr(result, "response", None)
+    if response:
+        payload["response"] = response
+    return 200 if receipt.replayed else 201, payload
 
 
 def route(service: DomainService, method: str, path: str, body: dict[str, Any] | None,
@@ -21,6 +33,8 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
     body = body or {}
     parsed = urlparse(path)
     actor_id = headers.get("X-Actor-Id", "")
+    appeals = AppealService(service.database, service.clock)
+    segments = [segment for segment in parsed.path.split("/") if segment]
     try:
         if method == "GET" and parsed.path == "/health":
             valid, count = service.verify_audit()
@@ -48,11 +62,83 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+        status, payload = _appeal_route(appeals, method, segments, parse_qs(parsed.query),
+                                        body, actor_id)
+        if status is not None:
+            return status, payload
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
     except (TypeError, ValueError) as exc:
         return 400, {"error": "invalid_request", "message": str(exc)}
+
+
+def _appeal_route(appeals: AppealService, method: str, segments: list[str],
+                  query: dict[str, list[str]], body: dict[str, Any],
+                  actor_id: str) -> tuple[int | None, dict[str, Any]]:
+    """处理竞赛申诉与裁决相关路由。"""
+
+    def q(name: str, default: str = "") -> str:
+        return query.get(name, [default])[0]
+
+    if method == "POST" and segments == ["competitions"]:
+        return _write_result(appeals.register_competition(actor_id=actor_id, **body))
+    if method == "POST" and segments == ["competitors"]:
+        return _write_result(appeals.register_competitor(actor_id=actor_id, **body))
+    if method == "POST" and segments == ["score-versions"]:
+        return _write_result(appeals.publish_score_version(actor_id=actor_id, **body))
+    if method == "POST" and segments == ["adjudicators"]:
+        return _write_result(appeals.register_adjudicator(actor_id=actor_id, **body))
+    if method == "POST" and segments == ["conflict-declarations"]:
+        return _write_result(appeals.declare_conflict(actor_id=actor_id, **body))
+    if method == "POST" and segments == ["appeals"]:
+        return _write_result(appeals.file_appeal(actor_id=actor_id, **body))
+    if len(segments) == 3 and segments[0] == "appeals" and segments[2] == "evidence":
+        if method == "POST":
+            return _write_result(appeals.add_evidence(actor_id=actor_id, case_id=segments[1], **body))
+        if method == "GET":
+            items = [item.__dict__ for item in appeals.list_evidence(segments[1])]
+            return 200, {"items": items}
+    if len(segments) == 4 and segments[0] == "appeals" and segments[2] == "screenings":
+        if method == "POST" and segments[3] == "check":
+            return _write_result(appeals.screen_adjudicator(actor_id=actor_id, case_id=segments[1], **body))
+    if method == "POST" and len(segments) == 4 and segments[0] == "appeals" \
+            and segments[2] == "screening" and segments[3] == "complete":
+        return _write_result(appeals.complete_screening(actor_id=actor_id, case_id=segments[1],
+                                                        **body))
+    if method == "POST" and len(segments) == 4 and segments[0] == "appeals" \
+            and segments[2] == "assignment" and segments[3] == "assign":
+        return _write_result(appeals.assign_handler(actor_id=actor_id, case_id=segments[1], **body))
+    if method == "POST" and segments == ["leases", "reclaim"]:
+        return 200, appeals.reclaim_expired_leases(actor_id=actor_id)
+    if method == "POST" and len(segments) == 4 and segments[0] == "appeals" \
+            and segments[2] == "evidence" and segments[3] == "requests":
+        return _write_result(appeals.request_evidence(actor_id=actor_id, case_id=segments[1], **body))
+    if method == "POST" and len(segments) == 3 and segments[0] == "appeals" \
+            and segments[2] == "recommendation":
+        return _write_result(appeals.submit_recommendation(actor_id=actor_id, case_id=segments[1], **body))
+    if method == "POST" and len(segments) == 3 and segments[0] == "appeals" \
+            and segments[2] == "withdraw":
+        return _write_result(appeals.withdraw_appeal(actor_id=actor_id, case_id=segments[1],
+                                                     **body))
+    if method == "POST" and len(segments) == 3 and segments[0] == "appeals" \
+            and segments[2] == "reject":
+        return _write_result(appeals.reject_appeal(actor_id=actor_id, case_id=segments[1], **body))
+    if method == "POST" and len(segments) == 3 and segments[0] == "appeals" \
+            and segments[2] == "decision":
+        return _write_result(appeals.decide_appeal(actor_id=actor_id, case_id=segments[1], **body))
+    if method == "GET" and len(segments) == 2 and segments[0] == "appeals":
+        case = appeals.get_case(segments[1])
+        return 200, case.__dict__
+    if method == "GET" and len(segments) == 3 and segments[0] == "appeals" and segments[2] == "snapshot":
+        return 200, appeals.case_snapshot(actor_id=actor_id, case_id=segments[1])
+    if method == "GET" and len(segments) == 3 and segments[0] == "appeals" and segments[2] == "timeline":
+        return 200, appeals.case_timeline(actor_id=actor_id, case_id=segments[1])
+    if method == "GET" and segments[:1] == ["public"] and len(segments) == 3 \
+            and segments[1] == "appeals":
+        result = appeals.public_result(segments[2])
+        return 200, result.__dict__
+    return None, {}
 
 
 class Handler(BaseHTTPRequestHandler):
