@@ -63,6 +63,97 @@ CREATE TABLE IF NOT EXISTS audit_events (
     event_hash TEXT NOT NULL UNIQUE,
     occurred_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS score_versions (
+    score_version_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    event_id TEXT NOT NULL,
+    competitor_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    published_at TEXT NOT NULL,
+    appeal_deadline TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    superseded_by TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(site_id, event_id, competitor_id, version)
+);
+CREATE TABLE IF NOT EXISTS cases (
+    case_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    score_version_id TEXT NOT NULL REFERENCES score_versions(score_version_id),
+    event_id TEXT NOT NULL,
+    competitor_id TEXT NOT NULL,
+    appellant_id TEXT NOT NULL,
+    grounds TEXT NOT NULL,
+    status TEXT NOT NULL,
+    assigned_arbitrator_id TEXT,
+    lease_version INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_expires_at TEXT,
+    outcome_json TEXT,
+    public_token TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cases_scope ON cases(site_id, event_id, competitor_id, status);
+CREATE TABLE IF NOT EXISTS material_versions (
+    material_id TEXT NOT NULL,
+    case_id TEXT NOT NULL REFERENCES cases(case_id),
+    material_kind TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    content_sha256 TEXT NOT NULL,
+    storage_ref TEXT NOT NULL,
+    summary_text TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    byte_length INTEGER NOT NULL CHECK(byte_length >= 0),
+    submitted_by TEXT NOT NULL,
+    submitted_at TEXT NOT NULL,
+    PRIMARY KEY(case_id, material_id, version)
+);
+CREATE TABLE IF NOT EXISTS conflict_checks (
+    case_id TEXT NOT NULL REFERENCES cases(case_id),
+    arbitrator_id TEXT NOT NULL,
+    conflicted INTEGER NOT NULL CHECK(conflicted IN (0, 1)),
+    basis_json TEXT NOT NULL,
+    checked_by TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY(case_id, arbitrator_id)
+);
+CREATE TABLE IF NOT EXISTS arbitrator_disclosures (
+    arbitrator_id TEXT NOT NULL,
+    scope_type TEXT NOT NULL,
+    scope_value TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(arbitrator_id, scope_type, scope_value)
+);
+CREATE TABLE IF NOT EXISTS case_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id TEXT NOT NULL REFERENCES cases(case_id),
+    seq INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    detail_json TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    UNIQUE(case_id, seq)
+);
+CREATE TABLE IF NOT EXISTS decisions (
+    case_id TEXT PRIMARY KEY REFERENCES cases(case_id),
+    recommendation TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    arbitrator_id TEXT NOT NULL,
+    recommended_at TEXT NOT NULL,
+    review_status TEXT NOT NULL,
+    reviewer_id TEXT,
+    review_rationale TEXT,
+    reviewed_at TEXT,
+    final_decision TEXT,
+    score_version_id TEXT REFERENCES score_versions(score_version_id),
+    correction_ref TEXT,
+    correction_payload_json TEXT
+);
 """
 
 

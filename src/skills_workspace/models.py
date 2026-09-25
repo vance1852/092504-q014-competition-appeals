@@ -49,3 +49,17 @@ class WriteReceipt:
     resource_type: str
     resource_id: str
     replayed: bool
+
+
+@dataclass(frozen=True)
+class ScoreVersion:
+    """表示按版本公布、并带有申诉期限的成绩。"""
+
+    score_version_id: str
+    site_id: str
+    event_id: str
+    competitor_id: str
+    version: int
+    published_at: str
+    appeal_deadline: str
+    payload_hash: str

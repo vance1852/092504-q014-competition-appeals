@@ -33,3 +33,22 @@ class ConflictError(DomainError):
 
     code = "conflict"
     status = 409
+
+
+class EligibilityError(DomainError):
+    """申诉未通过资格、期限或重复申请校验。"""
+
+    code = "eligibility_failed"
+    status = 422
+
+
+class LeaseError(ConflictError):
+    """承办租约已超时或代号已失效。"""
+
+    code = "lease_stale"
+
+
+class ProtectedStateError(ConflictError):
+    """案件处于受保护终态，不允许再变更。"""
+
+    code = "protected_state"

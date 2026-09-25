@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .appeals import AppealService
 from .errors import DomainError, ValidationError
 from .service import DomainService
 from .storage import Database
@@ -21,6 +22,12 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
     body = body or {}
     parsed = urlparse(path)
     actor_id = headers.get("X-Actor-Id", "")
+    appeals = AppealService(service.database, service.clock)
+    query = parse_qs(parsed.query)
+
+    def q(name: str, default: str | None = None) -> str | None:
+        return query.get(name, [default])[0]
+
     try:
         if method == "GET" and parsed.path == "/health":
             valid, count = service.verify_audit()
@@ -38,16 +45,75 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             receipt = service.record_domain_data(actor_id=actor_id, **body)
             return 200 if receipt.replayed else 201, receipt.__dict__
         if method == "GET" and parsed.path == "/domain-records":
-            query = parse_qs(parsed.query)
-            site_id = query.get("site_id", [""])[0]
+            site_id = q("site_id", "")
             if not site_id:
                 raise ValidationError("site_id 不能为空")
-            category = query.get("category", [None])[0]
-            return 200, {"items": [item.__dict__ for item in service.list_domain_data(site_id, category)]}
+            return 200, {"items": [item.__dict__ for item in service.list_domain_data(site_id, q("category"))]}
         if method == "GET" and parsed.path == "/audit-events":
-            query = parse_qs(parsed.query)
-            after = int(query.get("after_sequence", ["0"])[0])
+            after = int(q("after_sequence", "0"))
             return 200, {"items": service.audit_events(after)}
+
+        # 申诉证据封存与裁决
+        if method == "POST" and parsed.path == "/score-versions":
+            result = appeals.publish_score_version(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/disclosures":
+            result = appeals.register_disclosure(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/conflict-checks":
+            result = appeals.record_conflict_check(actor_id=actor_id, **body)
+            return 200, result
+        if method == "POST" and parsed.path == "/appeals":
+            result = appeals.file_appeal(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/appeal-assignments":
+            result = appeals.assign_case(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/lease-renewals":
+            return 200, appeals.renew_lease(actor_id=actor_id, **body)
+        if method == "POST" and parsed.path == "/lease-reclaims":
+            return 200, appeals.reclaim_expired_leases(actor_id=actor_id, **body)
+        if method == "POST" and parsed.path == "/materials":
+            result = appeals.submit_material(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "GET" and parsed.path == "/materials":
+            case_id = q("case_id", "")
+            if not case_id:
+                raise ValidationError("case_id 不能为空")
+            return 200, {"items": appeals.list_materials(actor_id=actor_id, case_id=case_id)}
+        if method == "POST" and parsed.path == "/supplement-requests":
+            result = appeals.request_supplement(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/recommendations":
+            result = appeals.recommend_decision(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/reviewer-assignments":
+            result = appeals.assign_reviewer(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "POST" and parsed.path == "/reviews":
+            result = appeals.review_decision(actor_id=actor_id, **body)
+            return 200, result
+        if method == "POST" and parsed.path == "/withdrawals":
+            result = appeals.withdraw_appeal(actor_id=actor_id, **body)
+            return 200 if result["replayed"] else 201, result
+        if method == "GET" and parsed.path == "/cases":
+            return 200, {"items": appeals.list_cases(actor_id=actor_id, status=q("status"),
+                                                    site_id=q("site_id"))}
+        if method == "GET" and parsed.path == "/case":
+            case_id = q("case_id", "")
+            if not case_id:
+                raise ValidationError("case_id 不能为空")
+            return 200, appeals.get_case_view(actor_id=actor_id, case_id=case_id)
+        if method == "GET" and parsed.path == "/case-timeline":
+            case_id = q("case_id", "")
+            if not case_id:
+                raise ValidationError("case_id 不能为空")
+            return 200, appeals.case_timeline(actor_id=actor_id, case_id=case_id)
+        if method == "GET" and parsed.path == "/public-result":
+            token = q("public_token", "")
+            if not token:
+                raise ValidationError("public_token 不能为空")
+            return 200, appeals.public_result(token)
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
